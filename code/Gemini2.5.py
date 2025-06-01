@@ -3,16 +3,14 @@ import os
 from datetime import datetime
 import base64
 import time
+import argparse # 引入argparse模块
 
 # --- Google Gemini API Setup ---
-import google.generativeai as genai # Renamed from 'google.genai' for standard usage
-from google.generativeai.types import HarmCategory, HarmBlockThreshold # For safety settings
-from google.api_core import exceptions as google_exceptions # For more specific error handling
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google.api_core import exceptions as google_exceptions
 
-# Ensure your GOOGLE_API_KEY is set as an environment variable
-# or replace "YOUR-API-KEY" with your actual API key
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY") # Recommended way
-# GOOGLE_API_KEY = "YOUR-ACTUAL-GEMINI-API-KEY" # Alternative: hardcode (NOT RECOMMENDED for production)
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
     print("CRITICAL: GOOGLE_API_KEY environment variable not found. Please set it.")
@@ -20,13 +18,14 @@ if not GOOGLE_API_KEY:
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# --- Model Configuration ---
-MODEL_TO_USE = "gemini-2.5-pro-preview-05-06" # Changed to a standard public Gemini Vision model
-EVALUATION_MODEL_NAME_FOR_OUTPUT = "gemini-2.5-pro-preview-05-06" # Reflects the actual model being used
+# --- Model Configuration (These now represent the JUDGE model) ---
+# IMPORTANT: 'gemini-2.5-pro-preview-05-06' is not a standard public Gemini model name via genai.
+# Please ensure this specific model name is valid for your API key.
+# For general use, 'gemini-1.5-pro-latest' is a robust choice for vision tasks.
+MODEL_TO_USE = "gemini-2.5-pro-preview-05-06" # This is the judge model
+EVALUATION_MODEL_NAME_FOR_OUTPUT = "gemini-2.5-pro-preview-05-06" # This is the judge model's name in output files
 
 try:
-    # Initialize Gemini model with safety settings
-    # Adjust safety settings as needed. These are for demonstration to be less strict.
     gemini_model = genai.GenerativeModel(
         model_name=MODEL_TO_USE,
         safety_settings={
@@ -37,24 +36,27 @@ try:
         }
     )
     API_CLIENT_ENABLED = True
-    print(f"Gemini client initialized for model: {MODEL_TO_USE}")
+    print(f"Gemini client initialized for judge model: {MODEL_TO_USE}")
 except Exception as e:
-    print(f"Failed to initialize Gemini model: {e}.")
+    print(f"Failed to initialize Gemini judge model: {e}.")
     API_CLIENT_ENABLED = False
     gemini_model = None
     exit(1)
 
-# --- Paths and Constants ---
-# Assuming these paths are relative to the script's execution directory
-# You might need to adjust IMAGE_BASE_DIR to be an absolute path or relative to a common root
-IMAGE_BASE_DIR = r"xx\data_0512" # Absolute path for clarity
-JSON_SURVEY_DATA_PATH = r"xx\merged_light_images.json" # Absolute path
-RESULTS_DIR = f'results_{EVALUATION_MODEL_NAME_FOR_OUTPUT}_eval'
-EVALUATIONS_FILE = os.path.normpath(os.path.join(RESULTS_DIR, f'{EVALUATION_MODEL_NAME_FOR_OUTPUT}_merged_evaluations.json'))
-RETRY_DELAY_SECONDS = 20
-MAX_RETRIES = 3 # Increased retries to 3 for robustness
+# --- Paths and Constants (These will be dynamically set by argparse) ---
+# Set initial defaults, which will be overridden by command-line arguments
+JSON_SURVEY_DATA_PATH = '' # Path to the JSON file containing original prompts and questions
+ORIGINAL_IMAGE_BASE_DIR = '' # Base directory for the *original* images referenced in JSON_SURVEY_DATA_PATH
+GENERATED_IMAGE_ROOT_DIR = '' # Root directory for the *generated* images (e.g., 'outputs/MODEL_NAME')
+MODEL_TO_EVALUATE_NAME = '' # The name of the model being evaluated (e.g., 'StableDiffusionXL')
 
-# --- Helper Functions (remain largely the same, but ensure paths are handled correctly) ---
+RESULTS_DIR = '' # Output directory for evaluation results
+EVALUATIONS_FILE = '' # Full path to the evaluation results JSON file
+
+RETRY_DELAY_SECONDS = 20
+MAX_RETRIES = 3
+
+# --- Helper Functions (remain largely the same) ---
 def load_survey_data(json_path_str):
     json_path_norm = os.path.normpath(json_path_str)
     if not os.path.exists(json_path_norm):
@@ -63,7 +65,7 @@ def load_survey_data(json_path_str):
     try:
         with open(json_path_norm, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            for i, item in enumerate(data): # Add original index from the input file
+            for i, item in enumerate(data):
                 item['original_index_in_survey_file'] = i
             return data
     except json.JSONDecodeError:
@@ -75,7 +77,6 @@ def load_survey_data(json_path_str):
 
 def get_reality_questions(case):
     en_questions = []
-    # We will only use "Questions_reality" if it exists.
     if "Questions_reality" in case and case["Questions_reality"]:
         en_questions = [q.strip() for q in case["Questions_reality"].split("\n") if q.strip()]
 
@@ -86,10 +87,9 @@ def get_reality_questions(case):
         else:
             cleaned_en_questions.append(q_en)
 
-    # We create a dummy list for combined_questions if no real Chinese questions exist.
     combined_questions = []
     for i, q_en in enumerate(cleaned_en_questions):
-        combined_questions.append({"en": q_en, "zh": "N/A", "original_question_index": i}) # zh will be N/A
+        combined_questions.append({"en": q_en, "zh": "N/A", "original_question_index": i})
     
     return combined_questions
 
@@ -105,8 +105,8 @@ def image_to_base64(image_path_str):
         print(f"Error encoding image {image_path_norm} to base64: {e}")
         return None
 
-# --- Model Evaluation Logic ---
 def load_existing_evaluations():
+    # Use the global EVALUATIONS_FILE path
     if os.path.exists(EVALUATIONS_FILE):
         try:
             with open(EVALUATIONS_FILE, 'r', encoding='utf-8') as f:
@@ -120,6 +120,15 @@ def load_existing_evaluations():
     return {}
 
 def save_evaluation(case_id_str, evaluation_data_dict, all_evaluations_dict):
+    # Ensure RESULTS_DIR exists before saving
+    if not os.path.exists(RESULTS_DIR):
+        try:
+            os.makedirs(RESULTS_DIR)
+            print(f"Created results directory: {RESULTS_DIR}")
+        except OSError as e:
+            print(f"Error creating results directory {RESULTS_DIR}: {e}")
+            return False
+
     all_evaluations_dict[case_id_str] = evaluation_data_dict
     try:
         with open(EVALUATIONS_FILE, 'w', encoding='utf-8') as f:
@@ -129,18 +138,16 @@ def save_evaluation(case_id_str, evaluation_data_dict, all_evaluations_dict):
         print(f"Error saving evaluations to {EVALUATIONS_FILE}: {e}")
         return False
 
-def call_model_for_full_evaluation(image_path_str, case_data_obj, reality_qs_for_case, attempt=1):
+def call_model_for_full_evaluation(image_path_to_evaluate_str, case_data_obj, reality_qs_for_case, attempt=1):
     if not API_CLIENT_ENABLED or not gemini_model:
         print(f"Gemini client not available. Skipping {MODEL_TO_USE} evaluation.")
         return None
 
-    base64_image = image_to_base64(image_path_str)
+    base64_image = image_to_base64(image_path_to_evaluate_str) # This is the generated image to evaluate
     if not base64_image:
         return None
     
     try:
-        # Convert base64 string to a `generative_models.Part` for Gemini
-        # Ensure the correct mime type, e.g., "image/jpeg"
         image_part = genai.GenerativeModel.Part.from_data(
             data=base64.b64decode(base64_image),
             mime_type="image/jpeg" # Assuming JPEG. Adjust if your images are PNG, etc.
@@ -155,7 +162,6 @@ def call_model_for_full_evaluation(image_path_str, case_data_obj, reality_qs_for
     reality_questions_prompt_text = "Reality Questions to Answer (provide only 'Yes', 'No', or 'Cannot Determine' for each):\n"
     if reality_qs_for_case:
         for i, q_obj in enumerate(reality_qs_for_case):
-            # Only use English question if Chinese is N/A
             q_display = f"Q_EN: \"{q_obj['en']}\""
             if q_obj['zh'] != "N/A":
                 q_display += f" / Q_ZH: \"{q_obj['zh']}\""
@@ -209,48 +215,43 @@ The entire response must be a single JSON object starting with {{ and ending wit
     print(f"  Requesting {MODEL_TO_USE} evaluation for case {case_id} (Attempt {attempt})...")
     model_response_content = None
 
-    # For Gemini, the content is a list of text and image parts
     contents = [
         full_prompt_text,
         image_part
     ]
 
     generation_config = {
-        "max_output_tokens": 1500, # Corresponds to max_tokens
+        "max_output_tokens": 1500,
         "temperature": 0.1,
     }
 
     try:
         print(f"    Sending request with params: model='{MODEL_TO_USE}', max_output_tokens={generation_config['max_output_tokens']}, temp={generation_config['temperature']}")
         
-        # Call Gemini API directly
         response = gemini_model.generate_content(
             contents,
             generation_config=generation_config
         )
         
-        # Check if response has text content
         if response.parts and response.parts[0].text:
             model_response_content = response.parts[0].text
-        elif hasattr(response, 'text') and response.text: # Fallback for simpler responses
+        elif hasattr(response, 'text') and response.text:
             model_response_content = response.text
         else:
             print(f"  Warning for {case_id}: Gemini API response structure unexpected or parts/text missing.")
             print(f"  Full API Response (first 500 chars): {str(response)[:500]}")
-            # Check for blocking reasons
             if response.prompt_feedback and response.prompt_feedback.block_reason:
                 print(f"  Prompt was blocked: {response.prompt_feedback.block_reason.name}")
             if response.candidates and response.candidates[0].finish_reason:
                 print(f"  Candidate finish reason: {response.candidates[0].finish_reason.name}")
                 if response.candidates[0].finish_reason.name == "SAFETY":
                     print(f"  Candidate blocked due to safety settings: {response.candidates[0].safety_ratings}")
-            return None # No content to parse
+            return None
 
         if not model_response_content:
             print(f"  Error for {case_id}: Model returned empty or null content. Raw content: '{model_response_content}'")
             return None
 
-        # Clean JSON response (Gemini might also wrap in ```json)
         cleaned_content = model_response_content.strip()
         if cleaned_content.startswith("```json"):
             cleaned_content = cleaned_content[7:]
@@ -259,7 +260,6 @@ The entire response must be a single JSON object starting with {{ and ending wit
             model_response_content = cleaned_content.strip()
         elif not (cleaned_content.startswith("{") and cleaned_content.endswith("}")):
             print(f"  Warning for {case_id}: Model response not clean JSON. Raw response snippet: {model_response_content[:300]}")
-            # Fall through to attempt parsing anyway, JSONDecodeError will catch it if it's not valid.
 
         parsed_eval = json.loads(model_response_content)
 
@@ -275,17 +275,15 @@ The entire response must be a single JSON object starting with {{ and ending wit
         if not isinstance(parsed_eval.get("aestheticsRating_Eval"), int) or \
            not isinstance(parsed_eval.get("consistencyRating_Eval"), int):
             print(f"  Error for {case_id}: Model response missing or has invalid type for aesthetics/consistency ratings. Received: {parsed_eval.get('aestheticsRating_Eval')}, {parsed_eval.get('consistencyRating_Eval')}")
-            # Depending on strictness, you might return None here
             
         final_eval_data = {
             "case_info": {
                 "original_index_in_survey_file": case_data_obj.get("original_index_in_survey_file", -1),
                 "caseId": case_id,
                 "title_EN": case_data_obj.get("title", "N/A"),
-                "title_ZH": case_data_obj.get("中文标题", "N/A"), # Will likely be N/A after previous script
-                "imageFile": case_data_obj.get("image", "N/A"),
+                "originalImageFile": case_data_obj.get("image", "N/A"), # Renamed for clarity
+                "evaluatedGeneratedImageFile": image_path_to_evaluate_str, # Explicitly store path to the generated image that was evaluated
                 "prompt_EN": prompt_en,
-                "prompt_ZH": prompt_zh, # Will likely be N/A after previous script
                 "reality_questions_asked_to_model": reality_qs_for_case
             },
             "model_evaluation": {
@@ -304,39 +302,64 @@ The entire response must be a single JSON object starting with {{ and ending wit
         print(f"  Received content that failed to parse: '{model_response_content}'")
     except (google_exceptions.ResourceExhausted, google_exceptions.RateLimitExceeded) as e:
         print(f"  Rate limit or resource exhausted for {case_id}: {e}")
-        error_message = str(e).lower()
-        if "rate limit" in error_message or "resource exhausted" in error_message:
-            print(f"  Rate limit possibly exceeded. Retrying in {RETRY_DELAY_SECONDS} seconds...")
-            time.sleep(RETRY_DELAY_SECONDS)
-            return call_model_for_full_evaluation(image_path_str, case_data_obj, reality_qs_for_case, attempt + 1)
+        time.sleep(RETRY_DELAY_SECONDS)
+        return call_model_for_full_evaluation(image_path_to_evaluate_str, case_data_obj, reality_qs_for_case, attempt + 1)
     except google_exceptions.BlockedPromptException as e:
         print(f"  Prompt for {case_id} was blocked by safety settings: {e}. Adjust safety settings or prompt content.")
     except google_exceptions.ServiceUnavailable as e:
         print(f"  Gemini API service unavailable for {case_id}: {e}. Retrying in {RETRY_DELAY_SECONDS} seconds...")
         time.sleep(RETRY_DELAY_SECONDS)
-        return call_model_for_full_evaluation(image_path_str, case_data_obj, reality_qs_for_case, attempt + 1)
+        return call_model_for_full_evaluation(image_path_to_evaluate_str, case_data_obj, reality_qs_for_case, attempt + 1)
     except google_exceptions.InternalServerError as e:
         print(f"  Gemini API internal server error for {case_id}: {e}. Retrying in {RETRY_DELAY_SECONDS} seconds...")
         time.sleep(RETRY_DELAY_SECONDS)
-        return call_model_for_full_evaluation(image_path_str, case_data_obj, reality_qs_for_case, attempt + 1)
-    except Exception as e: # Catch any other unexpected errors
+        return call_model_for_full_evaluation(image_path_to_evaluate_str, case_data_obj, reality_qs_for_case, attempt + 1)
+    except Exception as e:
         print(f"  An unexpected error occurred calling Gemini API for case {case_id}: {e}")
 
     if attempt < MAX_RETRIES:
         print(f"  Retrying in {RETRY_DELAY_SECONDS} seconds...")
         time.sleep(RETRY_DELAY_SECONDS)
-        return call_model_for_full_evaluation(image_path_str, case_data_obj, reality_qs_for_case, attempt + 1)
+        return call_model_for_full_evaluation(image_path_to_evaluate_str, case_data_obj, reality_qs_for_case, attempt + 1)
     else:
         print(f"  Max retries reached for case {case_id}. Skipping.")
     return None
 
-# --- Main Processing Logic (ensure paths are created before use) ---
+# --- Main Processing Logic ---
 def main():
+    global JSON_SURVEY_DATA_PATH, ORIGINAL_IMAGE_BASE_DIR, GENERATED_IMAGE_ROOT_DIR, MODEL_TO_EVALUATE_NAME, RESULTS_DIR, EVALUATIONS_FILE
+
+    parser = argparse.ArgumentParser(description="Evaluate generated images for lighting realism using Gemini as a judge.")
+    parser.add_argument('--input', type=str, required=True,
+                        help="Path to the JSON survey data file (e.g., data/merged_light_images.json). "
+                             "The directory of this file will also be used as the base for original images.")
+    parser.add_argument('--output', type=str, required=True,
+                        help="Base directory for generated model outputs (e.g., outputs/MODEL_NAME). "
+                             "Evaluation results will be saved within this directory. "
+                             "The last part of this path will be used as the evaluated MODEL_NAME.")
+    # Optional: Allow changing the judge model name if needed, but not strictly asked for in the prompt.
+    # parser.add_argument('--judge_model', type=str, default=MODEL_TO_USE,
+    #                     help="Name of the Gemini model to use for judging (e.g., gemini-1.5-pro-latest).")
+
+    args = parser.parse_args()
+
+    # Set global paths based on parsed arguments
+    JSON_SURVEY_DATA_PATH = os.path.normpath(args.input)
+    # The original images (e.g., 'direct_light_images/1.1.png') are expected to be relative to the input JSON's directory.
+    ORIGINAL_IMAGE_BASE_DIR = os.path.dirname(JSON_SURVEY_DATA_PATH) 
+
+    GENERATED_IMAGE_ROOT_DIR = os.path.normpath(args.output) # This is `outputs/MODEL_NAME`
+    MODEL_TO_EVALUATE_NAME = os.path.basename(GENERATED_IMAGE_ROOT_DIR) # Extracts 'MODEL_NAME'
+
+    RESULTS_DIR = GENERATED_IMAGE_ROOT_DIR # Results will be saved inside `outputs/MODEL_NAME`
+    # Evaluation file name now includes *both* the evaluated model and the judge model.
+    EVALUATIONS_FILE = os.path.normpath(os.path.join(RESULTS_DIR, f'{MODEL_TO_EVALUATE_NAME}_judged_by_{EVALUATION_MODEL_NAME_FOR_OUTPUT}_evaluations.json'))
+
     if not API_CLIENT_ENABLED or not gemini_model:
         print(f"Gemini client for {MODEL_TO_USE} is not initialized. Cannot proceed.")
         return
 
-    # Ensure results directory exists
+    # Ensure results directory exists before starting processing
     if not os.path.exists(RESULTS_DIR):
         try:
             os.makedirs(RESULTS_DIR)
@@ -352,9 +375,9 @@ def main():
         return
     print(f"Loaded {len(all_survey_cases)} survey cases.")
 
-    print(f"Loading existing {EVALUATION_MODEL_NAME_FOR_OUTPUT} evaluations from: {EVALUATIONS_FILE}")
+    print(f"Loading existing evaluations for {MODEL_TO_EVALUATE_NAME} from: {EVALUATIONS_FILE}")
     evaluations_on_disk = load_existing_evaluations()
-    print(f"Found {len(evaluations_on_disk)} existing {EVALUATION_MODEL_NAME_FOR_OUTPUT} evaluations.")
+    print(f"Found {len(evaluations_on_disk)} existing evaluations for this run.")
 
     new_evals_this_run = 0
     failed_evals_this_run = 0
@@ -365,49 +388,49 @@ def main():
             print(f"Warning: Case at original_index_in_survey_file {case_data.get('original_index_in_survey_file', 'N/A')} is missing 'index' field. Skipping.")
             continue
 
-        print(f"\nProcessing case {i+1}/{len(all_survey_cases)}: ID '{case_id}'")
+        print(f"\nProcessing case {i+1}/{len(all_survey_cases)}: ID '{case_id}' for model '{MODEL_TO_EVALUATE_NAME}'")
 
         if case_id in evaluations_on_disk:
             print(f"  Evaluation for case {case_id} already exists. Skipping.")
             continue
 
-        # Adjust for `image_paths` or `image` depending on your JSON structure
-        # The previous script outputs `image_paths` but this script expects `image` (single string).
-        # Assuming the merged_light_images.json still has the 'image' field for single images.
-        image_filename = case_data.get("image")
-        if not image_filename:
+        original_image_filename_relative = case_data.get("image") # e.g., "direct_light_images/1.1.png"
+        if not original_image_filename_relative:
             print(f"  Warning: Case {case_id} is missing 'image' filename. Skipping.")
             continue
         
-        # Construct the full image path
-        image_path = os.path.join(IMAGE_BASE_DIR, image_filename)
-        if not os.path.exists(image_path):
-            print(f"  Warning: Image file not found for case {case_id} at {image_path}. Skipping.")
+        # Construct the full path to the *generated* image for this case
+        # Expected structure: outputs/{MODEL_NAME}/images/{category}/{image_file_name_from_json}
+        # Example: outputs/StableDiffusionXL/images/direct_light_images/1.1.png
+        generated_image_full_path = os.path.join(GENERATED_IMAGE_ROOT_DIR, 'images', original_image_filename_relative)
+
+        if not os.path.exists(generated_image_full_path):
+            print(f"  Warning: Generated image file not found for case {case_id} at {generated_image_full_path}. Skipping.")
             continue
 
         reality_questions_for_this_case = get_reality_questions(case_data)
 
-        # Add some delay between actual API calls
         if new_evals_this_run > 0 or failed_evals_this_run > 0 : 
-             if (new_evals_this_run + failed_evals_this_run) % 5 == 0: # Longer delay every 5 calls
+             if (new_evals_this_run + failed_evals_this_run) % 5 == 0:
                  print("    Pausing for 5s to avoid potential rate limits...")
                  time.sleep(5)
              else:
                  time.sleep(1)
 
-
-        evaluation_result_data = call_model_for_full_evaluation(image_path, case_data, reality_questions_for_this_case)
+        # Pass the path to the *generated image* for evaluation
+        evaluation_result_data = call_model_for_full_evaluation(generated_image_full_path, case_data, reality_questions_for_this_case)
 
         if evaluation_result_data:
-            print(f"  SUCCESS: {EVALUATION_MODEL_NAME_FOR_OUTPUT} ({MODEL_TO_USE}) Evaluation for {case_id}")
+            print(f"  SUCCESS: {EVALUATION_MODEL_NAME_FOR_OUTPUT} ({MODEL_TO_USE}) Evaluation for {case_id} on '{MODEL_TO_EVALUATE_NAME}'")
             save_evaluation(case_id, evaluation_result_data, evaluations_on_disk)
             new_evals_this_run += 1
         else:
-            print(f"  FAILURE: Failed to evaluate case {case_id} with {MODEL_TO_USE} after retries (if applicable).")
+            print(f"  FAILURE: Failed to evaluate case {case_id} for '{MODEL_TO_EVALUATE_NAME}' with {MODEL_TO_USE} after retries (if applicable).")
             failed_evals_this_run +=1
 
     print("\n--- Evaluation Run Summary ---")
-    print(f"Evaluation Model Used: {MODEL_TO_USE} (Output label: {EVALUATION_MODEL_NAME_FOR_OUTPUT})")
+    print(f"Evaluated Model: {MODEL_TO_EVALUATE_NAME}")
+    print(f"Judge Model Used: {MODEL_TO_USE} (Output label: {EVALUATION_MODEL_NAME_FOR_OUTPUT})")
     print(f"Total cases in survey file: {len(all_survey_cases)}")
     print(f"Total evaluations on disk before run: {len(evaluations_on_disk) - new_evals_this_run}")
     print(f"Newly evaluated cases in this run: {new_evals_this_run}")
@@ -418,15 +441,10 @@ def main():
 
 
 if __name__ == "__main__":
-    print(f"Starting {EVALUATION_MODEL_NAME_FOR_OUTPUT} ({MODEL_TO_USE}) Automated Full Survey Evaluation Script...")
-    print(f"!!! CRITICAL: ENSURE YOUR GOOGLE_API_KEY IS VALID AND THE MODEL NAME '{MODEL_TO_USE}' IS CORRECT FOR DIRECT GEMINI API. !!!")
+    print(f"Starting Automated Evaluation Script...")
+    print(f"!!! CRITICAL: ENSURE YOUR GOOGLE_API_KEY IS VALID AND THE JUDGE MODEL NAME '{MODEL_TO_USE}' IS CORRECT FOR DIRECT GEMINI API. !!!")
     
-    # Pre-check paths
-    if not os.path.isdir(IMAGE_BASE_DIR):
-        print(f"CRITICAL ERROR: IMAGE_BASE_DIR '{IMAGE_BASE_DIR}' does not exist or is not a directory!")
-        exit(1)
-    if not os.path.isfile(JSON_SURVEY_DATA_PATH):
-        print(f"CRITICAL ERROR: JSON_SURVEY_DATA_PATH '{JSON_SURVEY_DATA_PATH}' does not exist or is not a file!")
-        exit(1)
+    # Pre-checks for arguments are handled by argparse's `required=True`
+    # Path validity will be checked within main() after arguments are parsed.
 
     main()
