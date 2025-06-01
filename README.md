@@ -19,7 +19,6 @@ In this work, we propose **GOBench**, the first benchmark on emerging abilities 
 <div align="center">
   <img src="images/2.png" width="70%">
   <br>
-  <em>(Illustration of GOBench's two core evaluation tasks: Generation and Understanding.)</em>
 </div>
 
 Task Distribution of *GOBench-Gen-1K*, involves three main optical categories: Direct light, Reflect light, and Refracted light. Each category includes various subcategories, facilitating a comprehensive dataset.
@@ -47,13 +46,11 @@ Our evaluations with **GOBench** reveal critical insights into the current limit
 <div align="center">
   <img src="images/6.2.png" width="90%">
   <br>
-  <em>(Accuracy scores for MLLMs on the optical understanding task.)</em>
 </div>
 
 <div align="center">
   <img src="images/6.3.png" width="90%">
   <br>
-  <em>(Accuracy scores for MLLMs on the optical understanding task.)</em>
 </div>
 
 ## 🛠️ Quick Start
