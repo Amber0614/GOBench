@@ -59,7 +59,7 @@ Our evaluations with **GOBench** reveal critical insights into the current limit
 ## 🛠️ Quick Start
 
 ### 1. Output Generation
-The input images for the four categories are located in the [`data`](data) directory. Each sample in the dataset contains `generation prompts`, the associated `image` and the associated `authentic questions`. 
+The examples of images for the three categories are located in the [`data`](data) directory. The total images can be downloaded in [![Hugging Face GOBench Dataset](https://img.shields.io/badge/HF-GOBench-blue?style=flat&logo=huggingface)](https://huggingface.co/datasets/bonnot/GOBench). Each sample in the dataset contains `generation prompts`, the associated `image` and the associated `authentic questions`. 
 
 ### 2. Evaluation By Human
 Once all outputs are generated and saved in the specified format, you can evaluate them using the `human_rate.py` script. The human subjective experiment rating interface is shown below.
@@ -91,5 +91,5 @@ After running the script, result files will be generated in the `outputs/{MODEL_
 We exhibit some examples of output of MLLMs. For more details, please refer to our paper.
 
 <div align="center">
-  <img src="images/4.png" width="100%">
+  <img src="images/5.png" width="100%">
 </div>
