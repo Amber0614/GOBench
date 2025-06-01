@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 import base64
 import time
-import argparse # 引入argparse模块
+import argparse
 
 # --- Google Gemini API Setup ---
 import google.generativeai as genai
@@ -19,9 +19,6 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # --- Model Configuration (These now represent the JUDGE model) ---
-# IMPORTANT: 'gemini-2.5-pro-preview-05-06' is not a standard public Gemini model name via genai.
-# Please ensure this specific model name is valid for your API key.
-# For general use, 'gemini-1.5-pro-latest' is a robust choice for vision tasks.
 MODEL_TO_USE = "gemini-2.5-pro-preview-05-06" # This is the judge model
 EVALUATION_MODEL_NAME_FOR_OUTPUT = "gemini-2.5-pro-preview-05-06" # This is the judge model's name in output files
 
