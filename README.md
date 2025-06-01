@@ -17,7 +17,7 @@ In this work, we propose **GOBench**, the first benchmark on emerging abilities 
 ## 📖 Introduction
 
 <div align="center">
-  <img src="images/2.png" width="70%">
+  <img src="images/2.png" width="50%">
   <br>
 </div>
 
@@ -32,7 +32,7 @@ Examples of *GOBench-Gen-1k* that show cases of designed scenarios, including di
 
 </div>
 <div align="center">
-  <img src="images/4.png" width="100%">
+  <img src="images/4.png" width="70%">
 </div>
 
 **Optical Authenticity questions of GOBench**. The questions based on *GOBench-Gen-1k* that evaluates the Optical Authenticity of MLLM's generations, and each case contains general and specific questions. 
@@ -44,12 +44,12 @@ Examples of *GOBench-Gen-1k* that show cases of designed scenarios, including di
 Our evaluations with **GOBench** reveal critical insights into the current limitations of MLLMs in handling geometric optics.
 
 <div align="center">
-  <img src="images/6.2.png" width="90%">
+  <img src="images/6.2.png" width="50%">
   <br>
 </div>
 
 <div align="center">
-  <img src="images/6.3.png" width="90%">
+  <img src="images/6.3.png" width="50%">
   <br>
 </div>
 
