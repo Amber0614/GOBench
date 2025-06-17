@@ -85,7 +85,7 @@ After running the script, result files will be generated in the `outputs/{MODEL_
 
 ## 🛠️ Quick Start from VLMEvalKit
 Also, our work has been merged to the VLMEvalKit at https://github.com/Amber0614/VLMEvalKit/tree/GOBench;
-You can download the VLMEvalKit from here, and use the following commound to evaluate LMMs:
+You can download the VLMEvalKit from here, and use the following commound to evaluate various LMMs:
 ```bash
 python run.py --model Qwen2.5-VL-7B-Instruct --data GOBench --verbose
 ```
