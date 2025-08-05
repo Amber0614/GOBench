@@ -1,3 +1,10 @@
+<div align="right">  
+<div style="width: 40%; text-align: right;">
+      <img style="width:15%" src="img/aibench.png">
+  </div>
+</div>
+<div align="center">  
+
 <div align="center">
   
 # GOBench: Benchmarking Geometric Optics Generation and Understanding of MLLMs
