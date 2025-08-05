@@ -1,6 +1,6 @@
 <div align="right">  
 <div style="width: 40%; text-align: right;">
-      <img style="width:15%" src="images/aibench.png">
+      <img style="width:15%" src="images/aibench.PNG">
   </div>
 </div>
 <div align="center">  
